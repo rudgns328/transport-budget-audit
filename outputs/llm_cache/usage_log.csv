@@ -1,0 +1,3 @@
+실행시각,mode,model,effort,prompt_version,호출수,분류수,실패수,input_tokens,output_tokens,비용_usd,소요초
+2026-10-17T19:34:40,trial,claude-haiku-5-5,medium,v1.1,1,50,0,3510,7266,0.004,29.8
+2026-10-17T19:34:47,trial,claude-sonnet-5-5,medium,v1.1,1,16,0,1995,1016,0.0141,7.2
