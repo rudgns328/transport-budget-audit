@@ -1,0 +1,24 @@
+# 비밀
+.env
+
+# 원본 데이터 (사용자가 직접 내려받음, 재배포하지 않음)
+data/raw/
+
+# 정제 중간 산출물 (01 단계에서 원본으로부터 재생성)
+data/processed/*
+!data/processed/.gitkeep
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# OS·편집기
+.DS_Store
+.vscode/
+.idea/
+
+# 엑셀 임시 파일
+~$*

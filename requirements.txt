@@ -1,0 +1,8 @@
+# Python 3.11 이상
+pandas>=2.1
+openpyxl>=3.1
+pyarrow>=14.0
+geopandas>=0.14
+matplotlib>=3.8
+anthropic>=0.40
+python-dotenv>=1.0
