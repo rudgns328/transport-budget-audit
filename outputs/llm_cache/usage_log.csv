@@ -1,3 +1,11 @@
 실행시각,mode,model,effort,prompt_version,호출수,분류수,실패수,input_tokens,output_tokens,비용_usd,소요초
 2026-10-17T19:34:40,trial,claude-haiku-5-5,medium,v1.1,1,50,0,3510,7266,0.004,29.8
 2026-10-17T19:34:47,trial,claude-sonnet-5-5,medium,v1.1,1,16,0,1995,1016,0.0141,7.2
+2026-10-17T19:53:37,trial,claude-haiku-5-5,medium,v1.2-draft1,1,50,0,4169,6678,0.0038,25.6
+2026-10-17T19:53:42,trial,claude-sonnet-5-5,medium,v1.2-draft1,1,10,0,2440,669,0.0116,5.2
+2026-10-17T19:54:22,trial,claude-haiku-5-5,medium,v1.2-draft1,1,50,0,4233,7447,0.0041,29.5
+2026-10-17T19:54:29,trial,claude-sonnet-5-5,medium,v1.2-draft1,1,19,0,2809,1228,0.0179,7.7
+2026-10-17T19:55:53,trial,claude-haiku-5-5,medium,v1.2,1,50,0,4241,7260,0.0041,29.4
+2026-10-17T19:55:58,trial,claude-sonnet-5-5,medium,v1.2,1,10,0,2529,711,0.0122,5.2
+2026-10-17T19:56:32,trial,claude-haiku-5-5,medium,v1.2,1,50,0,4305,7182,0.004,28.6
+2026-10-17T19:56:39,trial,claude-sonnet-5-5,medium,v1.2,1,16,0,2759,1078,0.0163,8.0

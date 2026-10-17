@@ -6,7 +6,7 @@
 - 프롬프트 [예시] 사업명과 같은 사업은 제외 (○○ 자리는 임의 문자열로 보고 패턴 매칭)
 - 같은 사업명(공백 무시)이 두 번 뽑히지 않게 한다
 
-입력: data/processed/candidates.parquet, prompts/classify_v1_1.txt, CLAUDE.md(4장)
+입력: data/processed/candidates.parquet, prompts/classify_v1_2.txt, CLAUDE.md(4장)
 출력:
   data/labels/label_template.xlsx   시트1 '라벨링'(빈 라벨 열), 시트2 '기준'(CLAUDE.md 4장 그대로)
   data/labels/sample_ids.csv        번호 ↔ id, 층 정보, 층 모집단 행 수 (04·05에서 사용)
@@ -28,7 +28,7 @@ from openpyxl.worksheet.datavalidation import DataValidation
 
 ROOT = Path(__file__).resolve().parents[1]
 CANDIDATES = ROOT / "data" / "processed" / "candidates.parquet"
-PROMPT = ROOT / "prompts" / "classify_v1_1.txt"
+PROMPT = ROOT / "prompts" / "classify_v1_2.txt"
 CLAUDE_MD = ROOT / "CLAUDE.md"
 LABEL_DIR = ROOT / "data" / "labels"
 
@@ -132,7 +132,7 @@ def write_template(sample: pd.DataFrame, path: Path) -> None:
     ws.freeze_panes = "A3"
 
     ws2 = wb.create_sheet("기준")
-    ws2.append(["CLAUDE.md 4장을 그대로 옮김 (분류 기준 v1.1)"])
+    ws2.append(["CLAUDE.md 4장을 그대로 옮김"])
     ws2["A1"].font = Font(bold=True)
     for line in criteria_section():
         if line.startswith("|"):

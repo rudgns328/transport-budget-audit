@@ -1,4 +1,4 @@
-"""04. LLM 분류 (기준 v1.1, prompts/classify_v1_1.txt).
+"""04. LLM 분류 (기준 v1.2, prompts/classify_v1_2.txt).
 
 분류 단위: (정규화 사업명, 분야, 부문). 정규화 = NFKC + 공백 제거, 분야는 2019 이름을 2025 이름으로 맞춘다 (D20).
 같은 단위의 행은 같은 분류를 받는다.
@@ -13,8 +13,9 @@
 API 모드는 이미 캐시에 있는 단위를 건너뛰므로 중단 후 같은 명령으로 이어서 실행할 수 있다 (--use-cache 기본값 True).
 
 출력 (outputs/llm_cache/, 커밋 대상)
-  items_v1_1.csv            분류 단위 목록 (id ↔ 사업명·분야·부문, 해당 행 수)
-  {trial_,}haiku_v1_1.csv   Haiku 결과 / {trial_,}sonnet_v1_1.csv  Sonnet 재분류 결과
+  items.csv                 분류 단위 목록 (id ↔ 사업명·분야·부문, 해당 행 수)
+  {trial_,}haiku_v1_2.csv   Haiku 결과 / {trial_,}sonnet_v1_2.csv  Sonnet 재분류 결과
+  (v1_1 파일은 v1.1 시험 기록으로 보존)
   usage_log.csv             실행별 토큰 사용량과 비용
 출력 (재생성 가능, 커밋 제외): data/processed/classified.parquet
 """
@@ -36,8 +37,9 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 CANDIDATES = ROOT / "data" / "processed" / "candidates.parquet"
 SAMPLE_IDS = ROOT / "data" / "labels" / "sample_ids.csv"
-PROMPT_PATH = ROOT / "prompts" / "classify_v1_1.txt"
-PROMPT_VERSION = "v1.1"
+PROMPT_VERSION = "v1.2"
+VTAG = PROMPT_VERSION.replace(".", "_")
+PROMPT_PATH = ROOT / "prompts" / f"classify_{VTAG}.txt"
 CACHE_DIR = ROOT / "outputs" / "llm_cache"
 QA_DIR = ROOT / "outputs" / "qa"
 OUT_PARQUET = ROOT / "data" / "processed" / "classified.parquet"
@@ -221,8 +223,8 @@ def log_usage(mode: str, model: str, effort: str, totals: dict) -> float:
 
 def combine(rows: pd.DataFrame, items: pd.DataFrame, prefix: str = "") -> pd.DataFrame:
     """Haiku 결과에 Sonnet 재분류를 덮어써 최종 분류를 만들고 원본 행에 붙인다."""
-    haiku = read_cache(CACHE_DIR / f"{prefix}haiku_v1_1.csv")
-    sonnet = read_cache(CACHE_DIR / f"{prefix}sonnet_v1_1.csv")
+    haiku = read_cache(CACHE_DIR / f"{prefix}haiku_{VTAG}.csv")
+    sonnet = read_cache(CACHE_DIR / f"{prefix}sonnet_{VTAG}.csv")
     res = items[["id"]].merge(
         haiku[["id", "category", "confidence", "reason", "model"]].add_suffix("_haiku").rename(columns={"id_haiku": "id"}),
         on="id", how="left")
@@ -268,25 +270,34 @@ def main() -> None:
     ap.add_argument("--use-cache", action=argparse.BooleanOptionalAction, default=True)
     ap.add_argument("--effort", default="medium", choices=["low", "medium", "high"])
     ap.add_argument("--workers", type=int, default=8)
+    ap.add_argument("--seed", type=int, default=SEED, help="trial 표본 추출 시드")
+    ap.add_argument("--trial-ids", type=Path, help="trial 대상 id 목록 CSV (이전 시험과 같은 단위로 비교할 때)")
     args = ap.parse_args()
 
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     rows = load_rows()
     items = build_items(rows)
-    items[["id", "사업명", "분야", "부문", "행수"]].to_csv(CACHE_DIR / "items_v1_1.csv", index=False, encoding="utf-8")
+    items[["id", "사업명", "분야", "부문", "행수"]].to_csv(CACHE_DIR / "items.csv", index=False, encoding="utf-8")
     print(f"분류 단위 {len(items):,}개 (후보 {len(rows):,}행)")
 
     if args.mode == "trial":
         sample_keys = set(pd.read_csv(SAMPLE_IDS)["세부사업명"].map(name_key))
         pool = items[~items["사업명키"].isin(sample_keys)]  # D13: 라벨 표본과 겹치는 사업명 제외
-        trial = pool.sample(TRIAL_N, random_state=SEED)
-        totals = classify(trial, MAIN_MODEL, args.effort, CACHE_DIR / "trial_haiku_v1_1.csv", 1, args.use_cache)
+        if args.trial_ids:
+            ids = set(pd.read_csv(args.trial_ids, dtype=str)["id"])
+            trial = pool[pool["id"].isin(ids)]
+            if len(trial) != len(ids):
+                raise SystemExit(f"지정한 id {len(ids)}개 중 {len(ids) - len(trial)}개가 라벨 표본과 겹치거나 없습니다")
+        else:
+            trial = pool.sample(TRIAL_N, random_state=args.seed)
+        totals = classify(trial, MAIN_MODEL, args.effort, CACHE_DIR / f"trial_haiku_{VTAG}.csv", 1, args.use_cache)
         h_cost = log_usage("trial", MAIN_MODEL, args.effort, totals)
-        h = read_cache(CACHE_DIR / "trial_haiku_v1_1.csv")
+        h = read_cache(CACHE_DIR / f"trial_haiku_{VTAG}.csv")
+        h = h[h["id"].isin(trial["id"])]
         low = trial[trial["id"].isin(h.loc[h["confidence"] == "low", "id"])]
         s_cost, s_items = 0.0, 0
         if len(low):
-            st = classify(low, RERUN_MODEL, args.effort, CACHE_DIR / "trial_sonnet_v1_1.csv", 1, args.use_cache)
+            st = classify(low, RERUN_MODEL, args.effort, CACHE_DIR / f"trial_sonnet_{VTAG}.csv", 1, args.use_cache)
             s_cost, s_items = log_usage("trial", RERUN_MODEL, args.effort, st), st["items"]
         low_rate = len(low) / max(len(h), 1)
         n = len(items)
@@ -298,20 +309,22 @@ def main() -> None:
         out = combine(trial_rows.drop_duplicates("단위id"), items, prefix="trial_")
         cols = ["세부사업명", "분야정규", "부문", "category_haiku", "confidence_haiku", "category_sonnet",
                 "confidence_sonnet", "category", "reason"]
-        out[cols].to_csv(QA_DIR / "04_trial_review.csv", index=False, encoding="utf-8-sig")
-        print(f"시험 결과 검토용: {(QA_DIR / '04_trial_review.csv').relative_to(ROOT)}")
+        tag = args.trial_ids.stem if args.trial_ids else f"s{args.seed}"
+        review = QA_DIR / f"04_trial_review_{VTAG}_{tag}.csv"
+        out[cols].to_csv(review, index=False, encoding="utf-8-sig")
+        print(f"시험 결과 검토용: {review.relative_to(ROOT)}")
         return
 
     if args.mode in ("full", "rerun-low"):
         if not args.yes:
             raise SystemExit("유료 전체 실행입니다. 사용자 승인 후 --yes를 붙여 실행하세요 (CLAUDE.md 원칙 1).")
         if args.mode == "full":
-            totals = classify(items, MAIN_MODEL, args.effort, CACHE_DIR / "haiku_v1_1.csv", args.workers, args.use_cache)
+            totals = classify(items, MAIN_MODEL, args.effort, CACHE_DIR / f"haiku_{VTAG}.csv", args.workers, args.use_cache)
             log_usage("full", MAIN_MODEL, args.effort, totals)
         else:
-            h = read_cache(CACHE_DIR / "haiku_v1_1.csv")
+            h = read_cache(CACHE_DIR / f"haiku_{VTAG}.csv")
             low = items[items["id"].isin(h.loc[h["confidence"] == "low", "id"])]
-            totals = classify(low, RERUN_MODEL, args.effort, CACHE_DIR / "sonnet_v1_1.csv", args.workers, args.use_cache)
+            totals = classify(low, RERUN_MODEL, args.effort, CACHE_DIR / f"sonnet_{VTAG}.csv", args.workers, args.use_cache)
             log_usage("rerun-low", RERUN_MODEL, args.effort, totals)
         if totals["failed"]:
             print(f"실패 {len(totals['failed'])}개: 같은 명령을 다시 실행하면 이어서 처리합니다")
