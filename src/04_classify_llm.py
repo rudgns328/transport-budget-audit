@@ -9,6 +9,8 @@
                  low 건은 Sonnet으로 재분류한다. 실제 토큰 사용량으로 전체 비용을 추정한다
   --mode full    전체 단위를 Haiku로 분류 (--yes 필요, 원칙 1: 사용자 승인 후)
   --mode rerun-low  Haiku 결과 중 confidence=low를 Sonnet으로 재분류 (--yes 필요)
+  --mode consistency  검증 표본(sample_ids.csv) 200건의 단위를 같은 2단계 절차로 한 번 더 분류해
+                consistency_{haiku,sonnet}_v1_2.csv에 저장 (05의 일관성 검사용, 약 0.1달러)
   --mode demo   시연용. 무작위 N개(--n, 기본 20)를 지금 실제 API로 같은 2단계 절차로 분류해
                 캐시의 최종 결과와 비교한다. 보고서 수치에 쓰는 캐시는 건드리지 않는다 (약 30초, 1센트 안팎)
 
@@ -305,7 +307,7 @@ def demo(items: pd.DataFrame, args) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--mode", choices=["cache", "trial", "full", "rerun-low", "demo"], default="cache")
+    ap.add_argument("--mode", choices=["cache", "trial", "full", "rerun-low", "demo", "consistency"], default="cache")
     ap.add_argument("--yes", action="store_true", help="전체 유료 실행 승인 (full, rerun-low)")
     ap.add_argument("--use-cache", action=argparse.BooleanOptionalAction, default=True)
     ap.add_argument("--effort", default="medium", choices=["low", "medium", "high"])
@@ -358,6 +360,18 @@ def main() -> None:
 
     if args.mode == "demo":
         demo(items, args)
+        return
+
+    if args.mode == "consistency":
+        ids = pd.read_csv(SAMPLE_IDS, dtype=str)["id"]
+        unit_ids = rows.loc[rows["id"].isin(ids), "단위id"].unique()
+        sub = items[items["id"].isin(unit_ids)]
+        th = classify(sub, MAIN_MODEL, args.effort, CACHE_DIR / f"consistency_haiku_{VTAG}.csv", 4, args.use_cache)
+        log_usage("consistency", MAIN_MODEL, args.effort, th)
+        h = read_cache(CACHE_DIR / f"consistency_haiku_{VTAG}.csv")
+        low = sub[sub["id"].isin(h.loc[h["confidence"] == "low", "id"])]
+        ts = classify(low, RERUN_MODEL, args.effort, CACHE_DIR / f"consistency_sonnet_{VTAG}.csv", 4, args.use_cache)
+        log_usage("consistency", RERUN_MODEL, args.effort, ts)
         return
 
     if args.mode in ("full", "rerun-low"):

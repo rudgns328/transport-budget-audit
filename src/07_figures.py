@@ -80,7 +80,7 @@ def fig1_flow(t: pd.DataFrame) -> None:
         ("데이터", "지방재정365\n세부사업별 세출현황\n2019·2024·2025"),
         ("후보 추출", "교통 분야 전체 +\n다른 분야 키워드\n후보 90,325행"),
         ("AI 분류", f"사업명 {units:,}개 단위\nHaiku 전체 분류 →\nlow {sonnet:,}개 Sonnet 재분류"),
-        ("사람 검증", "층화 표본 200건\n사람 라벨과 비교\n(정확도·혼동행렬)"),
+        ("분석자 검증", "층화 표본 200건\n직접 분류해 AI와 비교\n(정확도·혼동행렬)"),
         ("지표", "사람 중심 비율 등\n243개 자치단체\n같은 유형 안 비교"),
     ]
     fig, ax = plt.subplots(figsize=(12, 2.8))
@@ -241,14 +241,15 @@ def fig6_validation() -> None:
     ax.set_xticks(range(m.shape[1]), cm.columns)
     ax.set_yticks(range(m.shape[0]), cm.index)
     ax.set_xlabel("AI 분류")
-    ax.set_ylabel("사람 라벨")
-    ax.set_title("혼동행렬 (표본 200건)", fontsize=10.5, color=INK, loc="left")
+    ax.set_ylabel("분석자 분류")
+    ax.set_title("혼동행렬 (검증 표본 200건)", fontsize=10.5, color=INK, loc="left")
     for s in ax.spines.values():
         s.set_visible(False)
     if len(ex):
         tx = fig.add_axes([0.47, 0.05, 0.52, 0.85])
         tx.set_axis_off()
-        tbl = tx.table(cellText=ex.values, colLabels=ex.columns, loc="upper left", cellLoc="left", colLoc="left")
+        tbl = tx.table(cellText=ex.values, colLabels=ex.columns, loc="upper left", cellLoc="left", colLoc="left",
+                       colWidths=[0.64, 0.12, 0.12, 0.12])
         tbl.auto_set_font_size(False)
         tbl.set_fontsize(8)
         tbl.scale(1, 1.35)

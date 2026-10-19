@@ -205,8 +205,16 @@ def pct(x: float) -> str:
 
 
 def write_summary(t, ts, ex, nat, ch, rb, eg) -> str:
-    L = ["# 결과 요약 (자동 생성: src/06_indicators.py)", "",
-         "> 분류는 AI(기준 v1.2) 결과이며 사람 라벨 검증(05) 전 수치다. 05 결과를 함께 읽을 것.",
+    vpath = ROOT / "outputs" / "validation" / "summary.csv"
+    if vpath.exists():
+        v = pd.read_csv(vpath, index_col=0)["값"].astype(float)
+        vnote = (f"> 분류는 AI(기준 v1.2) 결과다. 분석자가 직접 분류한 검증 라벨 200건 대비 정확도 {pct(v['정확도(단순)'])} "
+                 f"(95% 신뢰구간 {pct(v['정확도 95% 신뢰구간 하한'])}부터 {pct(v['정확도 95% 신뢰구간 상한'])}, "
+                 f"층별 가중 {pct(v['정확도(층별 모집단 가중)'])}, kappa {v['Cohen kappa(분석자 vs AI)']:.3f}). "
+                 "출처: outputs/validation/validation_report.md")
+    else:
+        vnote = "> 분류는 AI(기준 v1.2) 결과이며 검증(05) 전 수치다."
+    L = ["# 결과 요약 (자동 생성: src/06_indicators.py)", "", vnote,
          "> 지표는 진단이며 인과를 뜻하지 않는다. 광역 본청과 기초는 섞지 않고, 같은 유형 안에서만 비교한다.", "",
          "## 지표 정의", "",
          "- 사람 중심 교통예산 비율 = (C+D+E) / (A~G 합), 자동차 용량 확대 비율 = A / (A~G 합). 기본 금액은 지출액",
