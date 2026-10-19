@@ -13,6 +13,9 @@
 - [원문] 국토지리정보원, 공간정보공동활용_시군구 https://www.data.go.kr/data/15123131/fileData.do
 - [원문] https://privacy.claude.com/en/articles/7996868
 - [원문] https://privacy.claude.com/en/articles/7996866
+- [원문] KOSIS 통계정보 이용지침 https://kosis.kr/serviceInfo/useGuide.do (2026-10-19 확인)
+- [원문] KOSIS 통계정보 활용약관 https://kosis.kr/serviceInfo/applicationClause.do (2026-10-19 확인)
+- [원문] 행정안전부, 행정구역(시군구)별/1세별 주민등록인구(DT_1B04006), KOSIS https://kosis.kr/statHtml/statHtml.do?orgId=101&tblId=DT_1B04006
 
 ## 제도·정책 배경
 
