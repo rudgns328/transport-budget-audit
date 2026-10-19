@@ -3,17 +3,18 @@
 프롬프트 확정·전체 분류 완료 후에만 실행한다 (D13).
 
 입력
-  data/labels/labels_*.xlsx       분석자 검증 라벨 (첫 파일이 주 라벨, 2개 이상이면 라벨러 간 kappa)
+  data/labels/labels_*.xlsx       검증 라벨. 라벨러1 = 분석자(주 라벨), 라벨러2 이후 = 외부 협조자(보조: 라벨러 간 일치도·다수결)
   data/labels/sample_ids.csv      번호 ↔ 행 id, 층 정보
   data/processed/classified.parquet  AI 최종 분류 (Haiku → low만 Sonnet)
   outputs/llm_cache/consistency_*_v1_2.csv  같은 단위를 다시 분류한 결과 (일관성 검사)
 출력 (outputs/validation/, 커밋 대상)
-  validation_report.md, summary.csv, confusion_matrix.csv, per_category.csv, by_group.csv,
+  validation_report.md, summary.csv, confusion_matrix.csv, per_category.csv, by_group.csv, inter_rater.csv,
   examples.csv (그림 6 분류 예시), disagreements.csv (불일치 목록, 분석자 메모·AI 이유 포함)
 """
 from __future__ import annotations
 
 import math
+import unicodedata
 from pathlib import Path
 
 import numpy as np
@@ -53,6 +54,17 @@ def kappa(a: pd.Series, b: pd.Series) -> float:
     return (po - pe) / (1 - pe) if pe < 1 else np.nan
 
 
+def fleiss(ratings: pd.DataFrame) -> float:
+    """행 = 사업, 열 = 라벨러. 모든 라벨러가 입력한 행만 쓴다."""
+    r = ratings.dropna()
+    n = r.shape[1]
+    counts = pd.DataFrame({c: (r == c).sum(axis=1) for c in CATS})
+    p_i = ((counts ** 2).sum(axis=1) - n) / (n * (n - 1))
+    p_j = counts.sum() / (len(r) * n)
+    pe = (p_j ** 2).sum()
+    return (p_i.mean() - pe) / (1 - pe)
+
+
 def consistency_categories() -> pd.Series:
     """일관성 검사의 최종 범주 (Haiku 재분류 → low는 Sonnet 재분류로 덮어씀)."""
     h = pd.read_csv(CACHE / "consistency_haiku_v1_2.csv", dtype=str).drop_duplicates("id", keep="last")
@@ -65,9 +77,13 @@ def consistency_categories() -> pd.Series:
 
 
 def main() -> None:
-    files = sorted(LABEL_DIR.glob("labels_*.xlsx"))
+    # macOS는 한글 파일명을 NFC/NFD로 섞어 저장할 수 있어, 정규화한 이름으로 정렬하고 분석자 파일(라벨러1)을 맨 앞에 둔다
+    files = sorted(LABEL_DIR.glob("labels_*.xlsx"), key=lambda f: unicodedata.normalize("NFC", f.name))
     if not files:
         raise SystemExit("검증 라벨 파일(data/labels/labels_*.xlsx)이 없습니다")
+    primary = [f for f in files if unicodedata.normalize("NFC", f.stem).endswith("라벨러1")]
+    if primary:
+        files = primary + [f for f in files if f not in primary]
     labels = [read_labels(f) for f in files]
     sample = pd.read_csv(LABEL_DIR / "sample_ids.csv")
     rows = pd.read_parquet(CLASSIFIED, columns=["id", "단위id", "지출액", "category", "confidence", "reason",
@@ -91,9 +107,43 @@ def main() -> None:
         "Cohen kappa(분석자 vs AI)": kappa(d["분석자"], d["AI"]),
         "지표 묶음 일치율(사람 중심/자동차/기타 교통/범위 밖)": (d["분석자"].map(GROUP) == d["AI"].map(GROUP)).mean(),
     }
+    inter = pd.DataFrame()
     if len(labels) > 1:
-        m = labels[0].merge(labels[1], on="번호", suffixes=("_1", "_2"))
-        summary["라벨러 간 kappa"] = kappa(m["범주_1"], m["범주_2"])
+        # 라벨러별 범주를 번호 기준으로 모은다 (빈칸은 비교에서 제외)
+        names = [unicodedata.normalize("NFC", f.stem).replace("labels_", "") for f in files]
+        wide = pd.DataFrame({nm: lb.set_index("번호")["범주"].where(lambda s: s.isin(CATS)) for nm, lb in zip(names, labels)})
+        wide["AI"] = d.set_index("번호")["AI"]
+        pairs = []
+        cols = names + ["AI"]
+        for i, a in enumerate(cols):
+            for b in cols[i + 1:]:
+                ok = wide[a].notna() & wide[b].notna()
+                pairs.append({"쌍": f"{a} – {b}", "구분": "AI–사람" if "AI" in (a, b) else "사람–사람", "건수": int(ok.sum()),
+                              "일치율": (wide.loc[ok, a] == wide.loc[ok, b]).mean(), "kappa": kappa(wide.loc[ok, a], wide.loc[ok, b])})
+        inter = pd.DataFrame(pairs)
+        hh, ah = inter[inter["구분"] == "사람–사람"], inter[inter["구분"] == "AI–사람"]
+        summary["라벨러 수(분석자 포함)"] = len(names)
+        summary["사람–사람 kappa 평균"] = hh["kappa"].mean()
+        summary["AI–사람 kappa 평균"] = ah["kappa"].mean()
+        summary["사람–사람 일치율 평균"] = hh["일치율"].mean()
+        summary["AI–사람 일치율 평균"] = ah["일치율"].mean()
+        if len(names) >= 3:
+            summary["Fleiss kappa(사람 라벨러 전체)"] = fleiss(wide[names])
+        # 다수결: 라벨러 과반이 고른 범주. 과반이 없으면 판정 불가
+        def majority(r):
+            vc = r.dropna().value_counts()
+            return vc.index[0] if len(vc) and vc.iloc[0] > len(r.dropna()) / 2 else np.nan
+        wide["다수결"] = wide[names].apply(majority, axis=1)
+        wide["만장일치"] = wide[names].nunique(axis=1).eq(1) & wide[names].notna().all(axis=1)
+        has = wide["다수결"].notna()
+        w = d.set_index("번호")["가중치"]
+        summary["다수결 정답이 있는 표본"] = int(has.sum())
+        summary["정확도(다수결 기준)"] = (wide.loc[has, "AI"] == wide.loc[has, "다수결"]).mean()
+        summary["정확도(다수결 기준, 층별 가중)"] = np.average(wide.loc[has, "AI"] == wide.loc[has, "다수결"], weights=w[has])
+        summary["만장일치 표본"] = int(wide["만장일치"].sum())
+        summary["정확도(만장일치 표본)"] = (wide.loc[wide["만장일치"], "AI"] == wide.loc[wide["만장일치"], names[0]]).mean()
+        summary["세 명 모두 다른 답"] = int((wide[names].nunique(axis=1) == len(names)).sum()) if len(names) >= 3 else 0
+        d = d.merge(wide[["다수결", "만장일치"]].reset_index(), on="번호", how="left")
     cons = consistency_categories() if (CACHE / "consistency_haiku_v1_2.csv").exists() else None
     if cons is not None:
         again = d["단위id"].map(cons)
@@ -133,6 +183,8 @@ def main() -> None:
     cm.to_csv(OUT / "confusion_matrix.csv", encoding="utf-8-sig")
     per.to_csv(OUT / "per_category.csv", index=False, encoding="utf-8-sig")
     groups.to_csv(OUT / "by_group.csv", index=False, encoding="utf-8-sig")
+    if len(inter):
+        inter.to_csv(OUT / "inter_rater.csv", index=False, encoding="utf-8-sig")
     dis.to_csv(OUT / "disagreements.csv", index=False, encoding="utf-8-sig")
     ex.to_csv(OUT / "examples.csv", index=False, encoding="utf-8-sig")
 
@@ -142,7 +194,8 @@ def main() -> None:
         return f"{v:.1%}" if isinstance(v, float) and 0 <= v <= 1 else (f"{v:.3f}" if isinstance(v, float) else str(v))
 
     L = ["# 05 AI 분류 검증", "", "자동 생성: src/05_validate.py. 기준 v1.2, 분석자가 직접 분류한 검증 라벨 "
-         f"{n}건(층화 표본, {', '.join(f.name for f in files)})과 AI 최종 분류 비교.", "",
+         f"{n}건(층화 표본, 주 라벨 {unicodedata.normalize('NFC', files[0].name)})과 AI 최종 분류 비교."
+         + (f" 보조 라벨: {', '.join(unicodedata.normalize('NFC', f.name) for f in files[1:])} (외부 협조자)." if len(files) > 1 else ""), "",
          "## 요약", "", "| 항목 | 값 |", "| --- | ---: |"]
     L += [f"| {k} | {f(v, k)} |" for k, v in summary.items()]
     L += ["", "- 층별 모집단 가중: 층 가중치 = 층 모집단 행 수 / 층 표본 수 (D19 표본 설계 보정)",
@@ -154,6 +207,11 @@ def main() -> None:
     L += [f"| {c} | " + " | ".join(str(cm.loc[c, x]) for x in CATS) + " |" for c in CATS]
     L += ["", "## 구분별 정확도", "", "| 구분 | 값 | 표본 수 | 정확도 |", "| --- | --- | ---: | ---: |"]
     L += [f"| {r.구분} | {r.값} | {r._3} | {f(r.정확도)} |" for r in groups.itertuples()]
+    if len(inter):
+        L += ["", "## 라벨러 간 일치도 (라벨러1 = 분석자, 라벨러2·3 = 외부 협조자, 서로 결과를 보지 않고 독립 분류)", "",
+              "| 쌍 | 구분 | 건수 | 일치율 | kappa |", "| --- | --- | ---: | ---: | ---: |"]
+        L += [f"| {r.쌍} | {r.구분} | {r.건수} | {r.일치율:.1%} | {r.kappa:.3f} |" for r in inter.itertuples()]
+        L += ["", "- 다수결: 사람 라벨러 과반이 고른 범주를 정답으로 본 AI 정확도 (요약표 참고)"]
     L += ["", f"불일치 {len(dis)}건 목록: outputs/validation/disagreements.csv (분석자 메모·AI 이유 포함)", ""]
     (OUT / "validation_report.md").write_text("\n".join(L), encoding="utf-8")
     print("\n".join(L[5:5 + 4 + len(summary)]))

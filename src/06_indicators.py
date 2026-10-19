@@ -210,8 +210,10 @@ def write_summary(t, ts, ex, nat, ch, rb, eg) -> str:
         v = pd.read_csv(vpath, index_col=0)["값"].astype(float)
         vnote = (f"> 분류는 AI(기준 v1.2) 결과다. 분석자가 직접 분류한 검증 라벨 200건 대비 정확도 {pct(v['정확도(단순)'])} "
                  f"(95% 신뢰구간 {pct(v['정확도 95% 신뢰구간 하한'])}부터 {pct(v['정확도 95% 신뢰구간 상한'])}, "
-                 f"층별 가중 {pct(v['정확도(층별 모집단 가중)'])}, kappa {v['Cohen kappa(분석자 vs AI)']:.3f}). "
-                 "출처: outputs/validation/validation_report.md")
+                 f"층별 가중 {pct(v['정확도(층별 모집단 가중)'])}, kappa {v['Cohen kappa(분석자 vs AI)']:.3f})"
+                 + (f". 외부 협조자 2명 포함 사람 라벨러 3명 사이 kappa {v['사람–사람 kappa 평균']:.3f}, AI–사람 {v['AI–사람 kappa 평균']:.3f}, "
+                    f"다수결 기준 정확도 {pct(v['정확도(다수결 기준)'])}" if "사람–사람 kappa 평균" in v.index else "")
+                 + ". 출처: outputs/validation/validation_report.md")
     else:
         vnote = "> 분류는 AI(기준 v1.2) 결과이며 검증(05) 전 수치다."
     L = ["# 결과 요약 (자동 생성: src/06_indicators.py)", "", vnote,
