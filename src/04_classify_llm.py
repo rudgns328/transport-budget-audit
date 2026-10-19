@@ -9,6 +9,8 @@
                  low 건은 Sonnet으로 재분류한다. 실제 토큰 사용량으로 전체 비용을 추정한다
   --mode full    전체 단위를 Haiku로 분류 (--yes 필요, 원칙 1: 사용자 승인 후)
   --mode rerun-low  Haiku 결과 중 confidence=low를 Sonnet으로 재분류 (--yes 필요)
+  --mode demo   시연용. 무작위 N개(--n, 기본 20)를 지금 실제 API로 같은 2단계 절차로 분류해
+                캐시의 최종 결과와 비교한다. 보고서 수치에 쓰는 캐시는 건드리지 않는다 (약 30초, 1센트 안팎)
 
 API 모드는 이미 캐시에 있는 단위를 건너뛰므로 중단 후 같은 명령으로 이어서 실행할 수 있다 (--use-cache 기본값 True).
 
@@ -261,16 +263,55 @@ def report(classified: pd.DataFrame, items: pd.DataFrame) -> str:
     return "\n".join(lines)
 
 
+# ---------- 시연 ----------
+
+def demo(items: pd.DataFrame, args) -> None:
+    """무작위 단위를 지금 다시 분류해 캐시의 최종 결과와 비교한다."""
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    out_dir = ROOT / "outputs" / "demo"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    seed = args.seed if args.seed != SEED else int(time.time()) % 100000  # 기본은 매번 다른 표본
+    pick = items.sample(args.n, random_state=seed)
+    h_path, s_path = out_dir / f"{stamp}_haiku.csv", out_dir / f"{stamp}_sonnet.csv"
+
+    t0 = time.time()
+    th = classify(pick, MAIN_MODEL, args.effort, h_path, 1, use_cache=False)
+    cost = cost_usd(MAIN_MODEL, th["input_tokens"], th["output_tokens"])
+    h = read_cache(h_path)
+    low = pick[pick["id"].isin(h.loc[h["confidence"] == "low", "id"])]
+    if len(low):
+        ts = classify(low, RERUN_MODEL, args.effort, s_path, 1, use_cache=False)
+        cost += cost_usd(RERUN_MODEL, ts["input_tokens"], ts["output_tokens"])
+    s = read_cache(s_path)
+    now = h.set_index("id")["category"].copy()
+    now.update(s.set_index("id")["category"])
+
+    cached = combine(pick.rename(columns={"id": "단위id"}).assign(id=pick["id"]), items)
+    cached = cached.set_index("단위id")["category"]
+    table = pick[["id", "사업명"]].assign(저장된_결과=pick["id"].map(cached), 지금_결과=pick["id"].map(now))
+    table["일치"] = (table["저장된_결과"] == table["지금_결과"]).map({True: "O", False: "X"})
+    table.to_csv(out_dir / f"{stamp}_compare.csv", index=False, encoding="utf-8-sig")
+
+    print(f"\n시연: 무작위 {len(pick)}개 사업 (시드 {seed}) 실시간 분류 vs 저장된 결과")
+    for r in table.itertuples():
+        print(f"  {r.일치}  {r.저장된_결과} → {r.지금_결과}  {r.사업명}")
+    agree = (table["일치"] == "O").mean()
+    print(f"\n일치율 {agree:.0%} ({(table['일치'] == 'O').sum()}/{len(table)}), "
+          f"비용 ${cost:.4f}, {time.time() - t0:.0f}초 (Sonnet 재분류 {len(low)}개)")
+    print(f"비교표: {(out_dir / f'{stamp}_compare.csv').relative_to(ROOT)}")
+
+
 # ---------- 실행 ----------
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--mode", choices=["cache", "trial", "full", "rerun-low"], default="cache")
+    ap.add_argument("--mode", choices=["cache", "trial", "full", "rerun-low", "demo"], default="cache")
     ap.add_argument("--yes", action="store_true", help="전체 유료 실행 승인 (full, rerun-low)")
     ap.add_argument("--use-cache", action=argparse.BooleanOptionalAction, default=True)
     ap.add_argument("--effort", default="medium", choices=["low", "medium", "high"])
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--seed", type=int, default=SEED, help="trial 표본 추출 시드")
+    ap.add_argument("--n", type=int, default=20, help="demo 모드 사업 수")
     ap.add_argument("--trial-ids", type=Path, help="trial 대상 id 목록 CSV (이전 시험과 같은 단위로 비교할 때)")
     args = ap.parse_args()
 
@@ -313,6 +354,10 @@ def main() -> None:
         review = QA_DIR / f"04_trial_review_{VTAG}_{tag}.csv"
         out[cols].to_csv(review, index=False, encoding="utf-8-sig")
         print(f"시험 결과 검토용: {review.relative_to(ROOT)}")
+        return
+
+    if args.mode == "demo":
+        demo(items, args)
         return
 
     if args.mode in ("full", "rerun-low"):
