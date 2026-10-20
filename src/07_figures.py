@@ -78,7 +78,7 @@ def fig1_flow(t: pd.DataFrame) -> None:
     sonnet = len(pd.read_csv(cache / "sonnet_v1_2.csv", usecols=["id"]).drop_duplicates())
     steps = [
         ("데이터", "지방재정365\n세부사업별 세출현황\n2019·2024·2025"),
-        ("후보 추출", "교통 분야 전체 +\n다른 분야 키워드\n후보 90,325행"),
+        ("후보 추출", "교통 분야 전체 +\n다른 분야 키워드\n후보 90,325건"),
         ("AI 분류", f"사업명 {units:,}개 단위\nHaiku 전체 분류 →\nlow {sonnet:,}개 Sonnet 재분류"),
         ("분석자 검증", "층화 표본 200건\n직접 분류해 AI와 비교\n(정확도·혼동행렬)"),
         ("지표", "사람 중심 비율 등\n243개 자치단체\n같은 유형 안 비교"),

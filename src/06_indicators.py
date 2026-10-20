@@ -119,7 +119,7 @@ def execution_rate(c: pd.DataFrame) -> pd.DataFrame:
             rows.append({"연도": y, "광역기초": lvl, "범주": k, "예산현액_억": dk["예산현액"].sum() / 1e8,
                          "지출액_억": dk["지출액"].sum() / 1e8,
                          "집행률": dk["지출액"].sum() / dk["예산현액"].sum() if dk["예산현액"].sum() else np.nan})
-        for name, ks in (("사람중심(C+D+E)", PEOPLE), ("자동차(A+B)", ["A", "B"])):
+        for name, ks in (("사람중심(C+D+E)", PEOPLE), ("도로·차량(A+B)", ["A", "B"])):
             dk = d[d["category"].isin(ks)]
             rows.append({"연도": y, "광역기초": lvl, "범주": name, "예산현액_억": dk["예산현액"].sum() / 1e8,
                          "지출액_억": dk["지출액"].sum() / 1e8, "집행률": dk["지출액"].sum() / dk["예산현액"].sum()})
@@ -190,12 +190,42 @@ def elderly_gap(t: pd.DataFrame) -> pd.DataFrame:
     """기초 자치단체 중 같은 유형 안에서 65세 이상 비율 상위 25%와 나머지의 D·E 비중 비교."""
     b = t[(t["연도"] == BASE_YEAR) & (t["광역기초"] == "기초")].copy()
     b["고령상위"] = b.groupby("유형")["고령비율"].transform(lambda s: s >= s.quantile(.75))
+    from scipy.stats import mannwhitneyu
+
     rows = []
     for (tp, top), d in b.groupby(["유형", "고령상위"]):
         rows.append({"유형": tp, "집단": "고령비율 상위 25%" if top else "나머지", "자치단체수": len(d),
                      "고령비율_중앙값": d["고령비율"].median(), "D비중_중앙값": d["비중_D_지출"].median(),
                      "E비중_중앙값": d["비중_E_지출"].median(), "1인당D_중앙값_원": d["1인당_보행자전거_원"].median()})
-    return pd.DataFrame(rows)
+    out = pd.DataFrame(rows)
+    # 같은 유형 안 두 집단의 분포 차이 검정 (맨-휘트니 U, 양측). 집단별 표본이 작아 검정력이 낮다는 점에 유의
+    for col, name in (("비중_D_지출", "D비중_p값"), ("비중_E_지출", "E비중_p값")):
+        pv = {tp: mannwhitneyu(g.loc[g["고령상위"], col].dropna(), g.loc[~g["고령상위"], col].dropna()).pvalue
+              for tp, g in b.groupby("유형")}
+        out[name] = out["유형"].map(pv)
+    return out
+
+
+def use_cases(c: pd.DataFrame, t: pd.DataFrame) -> pd.DataFrame:
+    """정책 활용 장면 (2025, 지자체 이름 없이 개수만). 점검 우선순위 후보이지 문제 지역 판정이 아니다."""
+    b = t[(t["연도"] == BASE_YEAR) & (t["광역기초"] == "기초")].copy()
+    g = b.groupby("유형")
+    old_top = g["고령비율"].transform(lambda s: s >= s.quantile(.75))
+    e_low = b["비중_E_지출"] < g["비중_E_지출"].transform("median")
+    a_high = b["자동차확대비율_지출"] > g["자동차확대비율_지출"].transform("median")
+    d_low = b["비중_D_지출"] < g["비중_D_지출"].transform("median")
+    a_rows = c[(c["연도"] == BASE_YEAR) & (c["category"] == "A")]
+    own = np.where(a_rows["광역기초"] == "광역", a_rows["예산_시도비"], a_rows["예산_시군구비"])
+    return pd.DataFrame([
+        {"장면": "① 이동 격차: 고령 비율 상위 25%(같은 유형 안)이면서 교통약자(E) 비중이 같은 유형 중앙값 미만인 기초",
+         "개수": int((old_top & e_low).sum()), "기준 집단": int(old_top.sum()),
+         "참고": f"해당 지자체 65세 이상 인구 {int(b.loc[old_top & e_low, '인구65'].sum()):,}명"},
+        {"장면": "② 탄소중립: 용량 확대(A)로 분류된 2025 세부사업",
+         "개수": len(a_rows), "기준 집단": a_rows[["지역", "자치단체"]].drop_duplicates().shape[0],
+         "참고": f"자체 재원 예산현액 {own.sum() / 1e12:.1f}조 원 (기준 집단 = 해당 사업이 있는 자치단체 수)"},
+        {"장면": "③ 사람 중심 전환: 자동차 확대 비율은 같은 유형 중앙값 초과, 보행·자전거(D) 비중은 중앙값 미만인 기초",
+         "개수": int((a_high & d_low).sum()), "기준 집단": len(b), "참고": ""},
+    ])
 
 
 # ---------- 보고 ----------
@@ -204,7 +234,7 @@ def pct(x: float) -> str:
     return f"{x * 100:.1f}%" if pd.notna(x) else "-"
 
 
-def write_summary(t, ts, ex, nat, ch, rb, eg) -> str:
+def write_summary(t, ts, ex, nat, ch, rb, eg, uc) -> str:
     vpath = ROOT / "outputs" / "validation" / "summary.csv"
     if vpath.exists():
         v = pd.read_csv(vpath, index_col=0)["값"].astype(float)
@@ -248,11 +278,11 @@ def write_summary(t, ts, ex, nat, ch, rb, eg) -> str:
         L.append(f"| {r['지표']} | {r['유형']} | {r['자치단체수']} | {r['변화_중앙값(%p)']:+.1f}%p | {pct(r['증가한_자치단체_비율'])} |")
     L += ["", "출처: outputs/indicators/change_2019_2025.csv (2025 값 − 2019 값, 군위군은 대구 기준으로 연결)", ""]
 
-    L += ["## 4. 범주별 집행률 (지출액 / 예산현액)", "", "| 연도 | 층위 | 사람중심(C+D+E) | 자동차(A+B) | A | B | C | D | E |",
+    L += ["## 4. 범주별 집행률 (지출액 / 예산현액)", "", "| 연도 | 층위 | 사람중심(C+D+E) | 도로·차량(A+B) | A | B | C | D | E |",
           "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"]
     for (y, lvl), d in ex.groupby(["연도", "광역기초"]):
         v = d.set_index("범주")["집행률"]
-        L.append(f"| {y} | {lvl} | {pct(v['사람중심(C+D+E)'])} | {pct(v['자동차(A+B)'])} | "
+        L.append(f"| {y} | {lvl} | {pct(v['사람중심(C+D+E)'])} | {pct(v['도로·차량(A+B)'])} | "
                  + " | ".join(pct(v[k]) for k in "ABCDE") + " |")
     L += ["", "출처: outputs/indicators/execution_rate.csv (층위 안 범주별 지출액 합 / 예산현액 합)", ""]
 
@@ -269,17 +299,22 @@ def write_summary(t, ts, ex, nat, ch, rb, eg) -> str:
     L += ["", "출처: outputs/indicators/robustness.csv", ""]
 
     L += ["## 7. 고령 지역 보조 분석 (2025 기초, 같은 유형 안 65세 이상 비율 상위 25% vs 나머지)", "",
-          "| 유형 | 집단 | 자치단체 수 | 고령비율 | D 비중 | E 비중 | 1인당 D(원) |", "| --- | --- | ---: | ---: | ---: | ---: | ---: |"]
+          "| 유형 | 집단 | 자치단체 수 | 고령비율 | D 비중 | E 비중 | 1인당 D(원) | D 차이 p | E 차이 p |",
+          "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"]
     for _, r in eg.iterrows():
         L.append(f"| {r['유형']} | {r['집단']} | {r['자치단체수']} | {pct(r['고령비율_중앙값'])} | {pct(r['D비중_중앙값'])} | "
-                 f"{pct(r['E비중_중앙값'])} | {r['1인당D_중앙값_원']:,.0f} |")
-    L += ["", "출처: outputs/indicators/elderly_gap.csv (D·E 비중 = 지출_D 또는 지출_E / 교통예산_AG)", ""]
+                 f"{pct(r['E비중_중앙값'])} | {r['1인당D_중앙값_원']:,.0f} | {r['D비중_p값']:.2f} | {r['E비중_p값']:.2f} |")
+    L += ["", "출처: outputs/indicators/elderly_gap.csv (D·E 비중 = 지출_D 또는 지출_E / 교통예산_AG). p값은 같은 유형 안 두 집단의 맨-휘트니 U 검정(양측)", ""]
 
     unk = t[t["연도"] == BASE_YEAR]
     L += ["## 8. 판단 불가 비중 (H 중 확신도 low)", "",
           f"- {BASE_YEAR} 자치단체별 금액 비중 중앙값 {pct(unk['판단불가_금액비중'].median())}, "
           f"최대 {pct(unk['판단불가_금액비중'].max())}",
           "- 출처: gov_indicators.csv 열 `판단불가_금액비중` (H·low 행 지출액 / 후보 전체 지출액)", ""]
+    L += ["## 9. 정책 활용 장면 (2025, 지자체 이름 없이 개수만, 점검 우선순위 후보)", "",
+          "| 장면 | 개수 | 기준 집단 | 참고 |", "| --- | ---: | ---: | --- |"]
+    L += [f"| {r['장면']} | {r['개수']:,} | {r['기준 집단']:,} | {r['참고']} |" for _, r in uc.iterrows()]
+    L += ["", "출처: outputs/indicators/use_cases.csv (유형 = 자치구·시·군, 중앙값·사분위는 같은 유형 안에서 계산)", ""]
     return "\n".join(L)
 
 
@@ -288,6 +323,7 @@ def main() -> None:
     t = build_gov_table(c, aux)
     ts, ex, nat = type_summary(t), execution_rate(c), national_own_source(c)
     ch, rb, eg = change(t), robustness(c, t), elderly_gap(t)
+    uc = use_cases(c, t)
 
     OUT.mkdir(parents=True, exist_ok=True)
     t.to_csv(OUT / "gov_indicators.csv", index=False, encoding="utf-8-sig")
@@ -297,7 +333,8 @@ def main() -> None:
     ch.to_csv(OUT / "change_2019_2025.csv", index=False, encoding="utf-8-sig")
     rb.to_csv(OUT / "robustness.csv", index=False, encoding="utf-8-sig")
     eg.to_csv(OUT / "elderly_gap.csv", index=False, encoding="utf-8-sig")
-    SUMMARY.write_text(write_summary(t, ts, ex, nat, ch, rb, eg), encoding="utf-8")
+    uc.to_csv(OUT / "use_cases.csv", index=False, encoding="utf-8-sig")
+    SUMMARY.write_text(write_summary(t, ts, ex, nat, ch, rb, eg, uc), encoding="utf-8")
     print(f"자치단체 × 연도 {len(t):,}행 → {OUT.relative_to(ROOT)}, 요약 → {SUMMARY.relative_to(ROOT)}")
 
 

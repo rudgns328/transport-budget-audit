@@ -7,7 +7,7 @@
 
 - [원문] 행정안전부, 지방재정365 연도별 세부사업별 세출현황
   https://www.data.go.kr/data/15138684/fileData.do
-  다운로드: https://www.lofin365.go.kr/portal/LF6000000.do?ntcaClsDvCd=FSL446
+  다운로드: https://www.lofin365.go.kr/portal/LF8310000.do?ntcaClsDvCd=FSL446
 - [원문] 행정안전부, 주민등록 인구통계 https://jumin.mois.go.kr
 - [원문] 국가데이터처, SGIS 행정구역 통계 및 경계 https://www.data.go.kr/dcat/metadata/15129688
 - [원문] 국토지리정보원, 공간정보공동활용_시군구 https://www.data.go.kr/data/15123131/fileData.do
